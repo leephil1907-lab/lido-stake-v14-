@@ -47,5 +47,16 @@
     "typescript": "~5.8.2",
     "vite": "^6.2.3"
   },
-  "overrides": {}
+  "overrides": {
+    "typescript": "~5.8.2",
+    "@wagmi/connectors": {
+      "typescript": "$typescript"
+    },
+    "@wagmi/core": {
+      "typescript": "$typescript"
+    }
+  },
+  "resolutions": {
+    "typescript": "~5.8.2"
+  }
 }

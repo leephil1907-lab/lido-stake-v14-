@@ -18,7 +18,21 @@ export default defineConfig(() => {
       },
     },
     optimizeDeps: {
-      include: ['@reown/appkit', '@reown/appkit-adapter-wagmi', '@reown/appkit-siwe', 'wagmi', 'viem'],
+      include: ['@reown/appkit', '@reown/appkit-adapter-wagmi', '@reown/appkit-siwe', 'wagmi', 'viem', 'buffer', 'process'],
+    },
+    build: {
+      commonjsOptions: {
+        transformMixedEsModules: true,
+        include: [/node_modules/],
+      },
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            vendor: ['react', 'react-dom'],
+            web3: ['wagmi', 'viem', '@reown/appkit', '@reown/appkit-adapter-wagmi'],
+          },
+        },
+      },
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
