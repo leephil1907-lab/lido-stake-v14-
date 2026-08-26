@@ -352,15 +352,29 @@ async function startServer() {
   const isProduction = process.env.NODE_ENV === "production" || fs.existsSync(distIndex);
 
   if (!isProduction) {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } catch (viteError) {
+      console.warn("Vite middleware unavailable, serving static dist files instead:", viteError);
+      if (fs.existsSync(distPath)) {
+        app.use(express.static(distPath, { maxAge: "1d" }));
+      }
+      app.get("*", (_req, res) => {
+        if (fs.existsSync(distIndex)) {
+          res.sendFile(distIndex);
+        } else {
+          res.status(200).send("<!DOCTYPE html><html><head><meta charset='UTF-8'/><title>Lido Stake</title></head><body><div id='root'></div></body></html>");
+        }
+      });
+    }
   } else {
     if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath, { maxAge: "1d", index: false }));
+      app.use(express.static(distPath, { maxAge: "1d" }));
     }
     app.get("*", (_req, res) => {
       const rootIndex = path.join(process.cwd(), "index.html");
