@@ -1,0 +1,6 @@
+{
+  "name": "Lido Stake",
+  "description": "Liquid staking interface for Lido Protocol allowing ETH staking, wstETH wrapping, and rewards management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
