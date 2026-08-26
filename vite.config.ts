@@ -23,7 +23,14 @@ export default defineConfig(() => {
     build: {
       commonjsOptions: {
         transformMixedEsModules: true,
-        include: [/node_modules/],
+        include: [
+          /@reown[\\/].*/,
+          /@wagmi[\\/].*/,
+          /wagmi[\\/].*/,
+          /viem[\\/].*/,
+          /@walletconnect[\\/].*/,
+          /node_modules/,
+        ],
       },
       rollupOptions: {
         output: {
