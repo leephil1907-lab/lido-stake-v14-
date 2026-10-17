@@ -250,6 +250,10 @@ export default function App() {
             Lido is an open-source peer-to-system software suite that enables users to mint transferable utility tokens (stETH) which receive rewards linked to Ethereum validation activities.
           </p>
         )}
+        <div className="mb-5 rounded-xl border border-border-main bg-input/40 px-4 py-3 text-xs leading-relaxed text-text-secondary">
+          <p className="font-semibold text-text-main mb-1">Operator & transaction information</p>
+          This interface is intended for the authorized Lido integration. Review the transaction details shown by your wallet before signing. Staking and token operations involve smart-contract, network, and market risks; balances and transaction status are sourced from connected providers and on-chain data.
+        </div>
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3 text-sm font-medium">
           <LidoLogo className="h-5 w-auto text-text-main opacity-70" />
           <a href="#" className="text-text-secondary hover:text-text-main transition-colors">Terms of Use</a>

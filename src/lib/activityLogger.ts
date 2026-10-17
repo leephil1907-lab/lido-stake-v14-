@@ -16,59 +16,31 @@ export interface ActivityRecord {
 
 const STORAGE_KEY = 'lido_platform_activities_v1';
 
-// Initial seed activities if none exist
-const DEFAULT_ACTIVITIES: ActivityRecord[] = [
-  {
-    id: 'act-1',
-    timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
-    wallet: '0x1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b',
-    action: 'STAKE',
-    amount: '12.5 ETH',
-    token: 'stETH',
-    txHash: '0x7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a',
-    status: 'Confirmed',
-    note: 'Automated vault staking deposit',
-  },
-  {
-    id: 'act-2',
-    timestamp: new Date(Date.now() - 3600000 * 5).toISOString(),
-    wallet: '0x5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f',
-    action: 'WRAP',
-    amount: '5.0 stETH',
-    token: 'wstETH',
-    txHash: '0x1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b',
-    status: 'Confirmed',
-  },
-  {
-    id: 'act-3',
-    timestamp: new Date(Date.now() - 3600000 * 12).toISOString(),
-    wallet: '0x9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b',
-    action: 'WALLET_CONNECT',
-    status: 'Verified',
-  },
-  {
-    id: 'act-4',
-    timestamp: new Date(Date.now() - 3600000 * 24).toISOString(),
-    wallet: '0x3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d',
-    action: 'WITHDRAW_REQUEST',
-    amount: '3.2 stETH',
-    status: 'Confirmed',
-    txHash: '0x8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c',
-  }
-];
-
+// No seeded/demo activity is displayed as user transaction history.
 export function getActivities(): ActivityRecord[] {
-  if (typeof window === 'undefined') return DEFAULT_ACTIVITIES;
+  if (typeof window === 'undefined') return [];
   try {
     const data = localStorage.getItem(STORAGE_KEY);
     if (!data) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_ACTIVITIES));
-      return DEFAULT_ACTIVITIES;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+      return [];
     }
-    return JSON.parse(data);
+    const parsed: unknown = JSON.parse(data);
+    if (!Array.isArray(parsed)) return [];
+    // Drop legacy sample entries and any activity record without a real transaction hash.
+    const realRecords = (parsed as ActivityRecord[]).filter((item) =>
+      item &&
+      !['act-1', 'act-2', 'act-3', 'act-4'].includes(item.id) &&
+      typeof item.txHash === 'string' &&
+      /^0x[a-fA-F0-9]{64}$/.test(item.txHash)
+    );
+    if (realRecords.length !== parsed.length) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(realRecords));
+    }
+    return realRecords;
   } catch (e) {
     console.error('Failed to load activities', e);
-    return DEFAULT_ACTIVITIES;
+    return [];
   }
 }
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAccount, useBalance, useReadContracts, useDisconnect } from 'wagmi';
 import { useAppKit } from '@reown/appkit/react';
 import { formatEther } from 'viem';
@@ -17,6 +17,15 @@ export function ConnectButton({ className }: ConnectButtonProps) {
 
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!showDetailsModal) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowDetailsModal(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showDetailsModal]);
 
   // 1. Precise ETH Balance
   const { data: ethBalanceData, isLoading: isEthLoading, refetch: refetchEth } = useBalance({
@@ -99,8 +108,8 @@ export function ConnectButton({ className }: ConnectButtonProps) {
 
       {/* Precise Wallet & Balances Inspection Modal */}
       {showDetailsModal && (
-        <div className="fixed inset-0 z-[9995] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in duration-200">
-          <div className="bg-card border border-border-main rounded-[24px] max-w-sm w-full p-6 shadow-2xl relative text-text-main space-y-5">
+        <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowDetailsModal(false); }} className="fixed inset-0 z-[9995] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div role="dialog" aria-modal="true" aria-label="Wallet details" className="bg-card border border-border-main rounded-[24px] max-w-sm w-full p-6 shadow-2xl relative text-text-main space-y-5">
             
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-border-main">

