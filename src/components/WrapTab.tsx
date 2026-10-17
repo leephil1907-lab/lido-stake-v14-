@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ExternalLink, RefreshCw, CheckCircle, AlertCircle, ArrowDownUp } from 'lucide-react';
-import { useAccount, useBalance, useReadContract, useWriteContract, useChainId } from 'wagmi';
+import { useAccount, useBalance, useReadContract, useWriteContract } from 'wagmi';
 import { parseEther, formatEther } from 'viem';
 import { ConnectButton } from './ConnectButton';
 import { FaqItem } from './FaqItem';
@@ -20,7 +20,6 @@ export function WrapTab() {
 
   const toast = useToast();
   const { isConnected, address } = useAccount();
-  const chainId = useChainId();
   const { writeContractAsync, isPending } = useWriteContract();
 
   const { data: ethBalance } = useBalance({ address });
