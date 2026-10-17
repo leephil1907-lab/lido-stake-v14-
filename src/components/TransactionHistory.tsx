@@ -59,7 +59,11 @@ export function TransactionHistory() {
     try {
       const localActivities = getActivities();
       const userLocal = localActivities.filter(
-        (a) => a.wallet.toLowerCase() === address.toLowerCase()
+        (a) =>
+          a.wallet.toLowerCase() === address.toLowerCase() &&
+          typeof a.txHash === 'string' &&
+          /^0x[a-fA-F0-9]{64}$/.test(a.txHash) &&
+          (a.status === 'Confirmed' || a.status === 'Verified')
       );
 
       for (const item of userLocal) {
@@ -72,7 +76,7 @@ export function TransactionHistory() {
         ) {
           results.push({
             id: item.id,
-            txHash: item.txHash || `0x${item.id.replace(/[^a-f0-9]/gi, '').padEnd(64, '0').slice(0, 64)}`,
+            txHash: item.txHash!,
             type: item.action,
             amount: item.amount ? item.amount.replace(/[^0-9.]/g, '') || '0' : '0',
             token: item.token || (item.action === 'STAKE' ? 'stETH' : item.action.includes('WRAP') ? 'wstETH' : 'ETH'),
@@ -464,7 +468,7 @@ export function TransactionHistory() {
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-bold text-text-main">{badge.label}</span>
                       <span className="text-[10px] font-mono font-semibold px-1.5 py-0.2 rounded bg-card border border-border-main text-text-secondary">
-                        {tx.source === 'onchain' ? 'On-Chain' : 'App Relay'}
+                        {tx.source === 'onchain' ? 'On-Chain' : 'Wallet transaction'}
                       </span>
                     </div>
                     <div className="text-[11px] text-text-secondary flex items-center gap-2 mt-0.5">
